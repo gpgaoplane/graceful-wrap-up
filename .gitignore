@@ -1,0 +1,7 @@
+# Runtime state files — generated, not source
+.handoff-signal
+.handoff-counter
+
+# OS
+.DS_Store
+Thumbs.db
