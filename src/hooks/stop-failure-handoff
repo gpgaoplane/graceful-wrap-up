@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+# StopFailure hook: fires on rate_limit or billing_error.
+# Agent is gone. Writes emergency artifacts from git state only.
+set -uo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/handoff-lib.sh"
+
+INPUT=$(cat)
+CWD=$(printf '%s' "$INPUT" | grep -o '"cwd":"[^"]*"' | cut -d'"' -f4)
+CWD="${CWD:-$(pwd)}"
+cd "$CWD" 2>/dev/null || true
+TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+PROJECT=$(basename "$CWD")
+TIER=$(read_signal_tier || echo "DEAD")
+QUOTA=$(read_signal_field "quota" 2>/dev/null || echo "unknown")
+
+BRANCH="unknown"; STATUS="(not a git repo)"; DIFF_STAT="(not a git repo)"
+DIFF_FULL="(not a git repo)"; LOG="(not a git repo)"
+if git rev-parse --git-dir &>/dev/null 2>&1; then
+    BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
+    STATUS=$(git status --porcelain 2>/dev/null || echo "(unavailable)")
+    DIFF_STAT=$(git diff --stat HEAD 2>/dev/null || echo "(no changes)")
+    DIFF_FULL=$(git diff HEAD 2>/dev/null | head -300 || echo "(no diff)")
+    LOG=$(git log --oneline -15 2>/dev/null || echo "(no log)")
+fi
+
+# Write AI_HANDOFF.md
+cat > "${CWD}/AI_HANDOFF.md.tmp" << HEOF
+# AI Handoff — ${TIMESTAMP}
+
+## Handoff Metadata
+- **Tier:** DEAD (session cutoff — no agent context)
+- **Quota at cutoff:** ${QUOTA}%
+- **Source:** emergency-hook-only (rate_limit or billing_error)
+- **Project:** ${PROJECT} | **Branch:** ${BRANCH}
+- **WARNING:** Written by hook after abrupt cutoff. No conversation context. Treat all in-progress work as UNVERIFIED.
+
+## What To Do First
+1. Read this file fully
+2. Run \`git status\` and \`git diff HEAD\` — verify against git state below
+3. Inspect modified files for truncation or incomplete state
+4. Check git log to reconstruct what was in progress
+
+## Git State at Cutoff
+
+### Working Tree
+\`\`\`
+${STATUS}
+\`\`\`
+### Diff Summary
+\`\`\`
+${DIFF_STAT}
+\`\`\`
+### Full Diff (first 300 lines)
+\`\`\`diff
+${DIFF_FULL}
+\`\`\`
+### Recent Commits
+\`\`\`
+${LOG}
+\`\`\`
+
+## Recovery Guidance
+- Modified files were being worked on at cutoff — inspect for truncation
+- Untracked files may be newly created and incomplete
+- Do not commit anything without verifying correctness first
+HEOF
+mv "${CWD}/AI_HANDOFF.md.tmp" "${CWD}/AI_HANDOFF.md"
+
+# Write RESUME_PROMPT.md
+cat > "${CWD}/RESUME_PROMPT.md.tmp" << REOF
+# Resume Prompt — ${PROJECT} — ${TIMESTAMP}
+
+You are resuming an **abruptly interrupted** session on **${PROJECT}**.
+The session was cut off at quota exhaustion (${QUOTA}% usage).
+This file was written automatically with NO agent context — only git state.
+
+## First Actions (mandatory)
+1. Read \`AI_HANDOFF.md\` in full
+2. Run \`git status\` and \`git diff HEAD\`
+3. Inspect modified files for incomplete/truncated state
+4. Identify last coherent completed work from \`git log\`
+
+## Context
+Project: **${PROJECT}** | Branch: **${BRANCH}**
+Session was cut off abruptly. Reconstruct intent from git history and file state.
+
+## Do This First
+Read the git diff. Find the most recently modified file. Determine if it is complete.
+If not — completing or reverting it is your first task.
+
+## Do NOT Do
+- Do not assume any in-progress work is correct or complete
+- Do not commit without verifying compilation/tests
+- Do not re-do already-committed work
+REOF
+mv "${CWD}/RESUME_PROMPT.md.tmp" "${CWD}/RESUME_PROMPT.md"
+
+exit 0

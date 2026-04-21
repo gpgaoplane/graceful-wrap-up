@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# Stop hook: appends git snapshot to AI_HANDOFF.md if signal exists.
+# Does nothing on clean sessions with no signal — zero cost.
+set -uo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/handoff-lib.sh"
+
+INPUT=$(cat)
+TIER=$(read_signal_tier)
+[[ -z "$TIER" ]] && exit 0
+
+CWD=$(printf '%s' "$INPUT" | grep -o '"cwd":"[^"]*"' | cut -d'"' -f4)
+CWD="${CWD:-.}"
+cd "$CWD" 2>/dev/null || true
+TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+HANDOFF_FILE="${CWD}/AI_HANDOFF.md"
+
+GIT_SECTION=""
+if git rev-parse --git-dir &>/dev/null 2>&1; then
+    BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
+    STATUS=$(git status --porcelain 2>/dev/null || echo "(unavailable)")
+    DIFF_STAT=$(git diff --stat HEAD 2>/dev/null || echo "(no uncommitted changes)")
+    LOG=$(git log --oneline -10 2>/dev/null || echo "(no log)")
+    GIT_SECTION="
+## Git Snapshot (stop-handoff hook — ${TIMESTAMP})
+**Branch:** ${BRANCH}
+
+### Working Tree
+\`\`\`
+${STATUS}
+\`\`\`
+### Diff Summary
+\`\`\`
+${DIFF_STAT}
+\`\`\`
+### Recent Commits
+\`\`\`
+${LOG}
+\`\`\`"
+fi
+
+if [[ -f "$HANDOFF_FILE" ]]; then
+    printf '%s\n' "$GIT_SECTION" >> "$HANDOFF_FILE"
+else
+    printf '# AI Handoff — %s\n\n## Source\nstop-hook-only (agent did not write artifacts)\n\n## Tier\n%s\n%s\n' \
+        "$TIMESTAMP" "$TIER" "$GIT_SECTION" > "$HANDOFF_FILE"
+fi
+
+rm -f "$HANDOFF_SIGNAL_FILE" "$HANDOFF_COUNTER_FILE"
+exit 0
