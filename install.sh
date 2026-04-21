@@ -64,9 +64,10 @@ hooks = settings.setdefault('hooks', {})
 def add_hook(event, matcher, command, timeout):
     entries = hooks.setdefault(event, [])
     for e in entries:
-        for h in e.get('hooks', []):
-            if h.get('command') == command:
-                return False  # already present
+        if e.get('matcher') == matcher:
+            for h in e.get('hooks', []):
+                if h.get('command') == command:
+                    return False  # already present (same matcher + command)
     entries.append({"matcher": matcher, "hooks": [{"type": "command", "command": command, "timeout": timeout}]})
     return True
 
