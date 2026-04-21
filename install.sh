@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# install.sh — deploys smart-quota-tracker to ~/.claude/
+# install.sh — deploys graceful-wrap-up to ~/.claude/
 # Safe to re-run: idempotent. Does not overwrite existing wrap-up.md without backup.
 set -euo pipefail
 
@@ -21,7 +21,7 @@ _find_py() {
 }
 PY=$(_find_py)
 
-echo "Installing smart-quota-tracker..."
+echo "Installing graceful-wrap-up..."
 
 # 1. Create target dirs
 mkdir -p "$HOOKS_DIR" "$SKILLS_DIR" "$COMMANDS_DIR"

@@ -8,9 +8,10 @@ This is the single entry point for any AI agent (Claude, Codex, Antigravity, or 
 
 ## What This Project Is
 
-`smart-quota-tracker` — a quota-aware graceful handoff system for Claude Code. It detects approaching usage limits via a cascade (OAuth → JSONL → heuristics), injects signals into the agent conversation at threshold, hard-blocks tool calls at 95%+, and writes continuation artifacts (`AI_HANDOFF.md`, `RESUME_PROMPT.md`) so the next session can resume from zero context.
+`graceful-wrap-up` — a quota-aware graceful handoff system for Claude Code. It detects approaching usage limits via a cascade (OAuth → JSONL → heuristics), injects signals into the agent conversation at threshold, hard-blocks tool calls at 95%+, and writes continuation artifacts (`AI_HANDOFF.md`, `RESUME_PROMPT.md`) so the next session can resume from zero context.
 
 **Repo:** https://github.com/gpgaoplane/smart-quota-tracker  
+**Working directory name:** `graceful-wrap-up`  
 **Primary platform:** Claude Code (hooks, skills, commands)  
 **Planned:** Codex adapter, Antigravity adapter
 
@@ -39,6 +40,15 @@ See `docs/STATUS.md` for full task history.
 ## Multi-Agent Collaboration
 
 Three AI agents work in this repo: **Claude** (Anthropic), **Codex** (OpenAI), **Antigravity** (Google/DeepMind). Each agent maintains its own dated work log in `docs/agents/`.
+
+### Canonical vs adapter files
+
+- `AI_AGENTS.md` is the canonical shared collaboration contract for this repo.
+- Platform-specific bootstrap files are adapters, not alternate sources of truth.
+- Shared rules should live here once. Agent-specific files should mostly point back here and add only platform-specific notes.
+- Current adapters:
+  - Claude: `.claude/CLAUDE.md`
+  - Codex: `.codex/BOOTSTRAP.md`
 
 ### Your onboarding checklist (run through this before every work session)
 
@@ -174,7 +184,7 @@ Point your platform's config file at this document. The exact filename varies by
 | Platform | Config file | Where it lives |
 |----------|-------------|----------------|
 | Claude Code | `CLAUDE.md` | `.claude/CLAUDE.md` (project) or `~/.claude/CLAUDE.md` (global) |
-| OpenAI Codex | `AGENTS.md` | repo root, or your agent's project folder |
+| OpenAI Codex | Codex bootstrap doc | `.codex/BOOTSTRAP.md` |
 | Antigravity | `GEMINI.md` | repo root |
 | Other | your platform's equivalent | wherever your platform looks |
 

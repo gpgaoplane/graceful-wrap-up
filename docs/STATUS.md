@@ -1,7 +1,7 @@
 # graceful-wrap-up — Project Status
 
 ## Current Phase
-Implementation complete. Weekly quota detection merged. Ready for GitHub push and optional next features.
+Implementation complete. Weekly quota detection merged. Collaboration/bootstrap docs added for Codex. Ready for optional next features and documentation cleanup.
 
 ## Done
 - [x] Design doc: `docs/plans/2026-04-20-graceful-handoff-design.md`
@@ -22,12 +22,11 @@ Implementation complete. Weekly quota detection merged. Ready for GitHub push an
 - [x] Production bug fixes: WARN now emits context injection; STOP/EMERGENCY route to stdout additionalContext (confirmed works on exit 2); accelerated polling once any signal active; all messages self-contained with explicit artifact-writing instructions
 
 ## In Progress
-- Pending GitHub push (`git push` blocked by interactive auth — run `! git push` manually)
-- Production bug fixes applied (see Done below)
+- Naming cleanup across active docs and bootstrap files
 
 ## Up Next
-- Push `feat/implementation` to remote
 - Consider: publish README, tag release
+- Continue naming cleanup between remote repo name (`smart-quota-tracker`) and local working name (`graceful-wrap-up`)
 - Potential next features (not committed): `extra_usage` monthly credit tracking, per-model bucket warnings
 
 ## Test Results (last run)
@@ -41,7 +40,7 @@ Implementation complete. Weekly quota detection merged. Ready for GitHub push an
 - `QUOTA_SOURCE` and `WEEKLY_RESETS_AT` are set inside subshells (`$()`); pre-declare pattern used for `set -u` safety; `WEEKLY_RESETS_AT` passed as `PCT|RESETS_AT` output format to escape subshell isolation
 
 ## Branch
-`feat/implementation` (ahead of `origin/feat/implementation` — needs push)
+`feat/implementation` (currently aligned with `origin/feat/implementation`)
 
 ## Last Updated
 2026-04-21

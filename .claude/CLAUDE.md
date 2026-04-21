@@ -1,4 +1,4 @@
-# Claude — Project Rules (smart-quota-tracker)
+# Claude — Project Rules (graceful-wrap-up)
 
 ## First read
 Read `AI_AGENTS.md` at the repo root before starting any work session. It covers project state, multi-agent rules, architecture, and gotchas shared by all agents.

@@ -1,4 +1,4 @@
-# smart-quota-tracker
+# graceful-wrap-up
 
 A quota-aware graceful handoff system for Claude Code.
 
@@ -17,8 +17,8 @@ Detects approaching usage limits, asks permission before entering handoff mode, 
 ## Install
 
 ```bash
-git clone https://github.com/gpgaoplane/smart-quota-tracker.git
-cd smart-quota-tracker
+git clone https://github.com/gpgaoplane/graceful-wrap-up.git
+cd graceful-wrap-up
 ./install.sh
 ```
 
@@ -58,6 +58,16 @@ Activate manually with `/graceful-wrap-up` or the agent detects quota warnings f
 ## Portability
 
 The skill file (`src/skills/graceful-wrap-up.md`) is platform-agnostic. Codex and Antigravity adapters (hook equivalents for those platforms) are planned for a future release.
+
+## Collaboration
+
+This repo now includes a shared AI collaboration guide in `AI_AGENTS.md`.
+
+- Claude uses `.claude/CLAUDE.md`
+- Codex uses `.codex/BOOTSTRAP.md`
+- Agent work logs live in `docs/agents/`
+
+If you are using an AI agent to work in this repo, start with `AI_AGENTS.md`.
 
 ## Requirements
 

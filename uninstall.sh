@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# uninstall.sh — removes smart-quota-tracker from ~/.claude/
+# uninstall.sh — removes graceful-wrap-up from ~/.claude/
 set -euo pipefail
 
 CLAUDE_DIR="$HOME/.claude"
@@ -16,7 +16,7 @@ _find_py() {
 }
 PY=$(_find_py)
 
-echo "Uninstalling smart-quota-tracker..."
+echo "Uninstalling graceful-wrap-up..."
 
 # 1. Remove hook scripts
 for hook in handoff-lib.sh pre-tool-use-handoff pre-compact-handoff stop-handoff stop-failure-handoff; do
