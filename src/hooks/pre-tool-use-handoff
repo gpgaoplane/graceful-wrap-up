@@ -24,18 +24,47 @@ if ! should_check_this_call "$COUNT"; then
     exit 0
 fi
 
-# Get quota via cascade (QUOTA_SOURCE set as side-effect inside subshell, pre-declare for set -u)
+# --- Five-hour quota check (cascade: oauth → jsonl → heuristic) ---
 QUOTA_SOURCE="none"
 PCT=$(get_quota "$COUNT")
-[[ -z "$PCT" ]] && exit 0
+TIER=""
+[[ -n "$PCT" ]] && TIER=$(tier_from_pct "$PCT")
 
-TIER=$(tier_from_pct "$PCT")
+# --- Weekly quota check (oauth only — no heuristic fallback) ---
+# get_weekly_quota_oauth outputs "PCT|RESETS_AT"; parse both fields here
+# to avoid subshell isolation losing WEEKLY_RESETS_AT
+WEEKLY_RESULT=$(get_weekly_quota_oauth 2>/dev/null || echo "")
+WEEKLY_PCT="${WEEKLY_RESULT%%|*}"
+WEEKLY_RESETS_AT="${WEEKLY_RESULT##*|}"
+[[ "$WEEKLY_PCT" == "$WEEKLY_RESETS_AT" ]] && WEEKLY_RESETS_AT=""  # no | separator = no resets_at
+WEEKLY_TIER=""
+[[ -n "$WEEKLY_PCT" && "$WEEKLY_PCT" =~ ^[0-9]+$ ]] && WEEKLY_TIER=$(tier_from_weekly_pct "$WEEKLY_PCT")
+
+# Pick the more severe tier; weekly wins on tie-break when equal severity
+FIVEHR_SEV=$(tier_severity "$TIER")
+WEEKLY_SEV=$(tier_severity "$WEEKLY_TIER")
+
+ACTIVE_SOURCE="$QUOTA_SOURCE"
+if (( WEEKLY_SEV >= FIVEHR_SEV && WEEKLY_SEV > 0 )); then
+    TIER="$WEEKLY_TIER"
+    PCT="$WEEKLY_PCT"
+    ACTIVE_SOURCE="seven_day"
+fi
+
 [[ -z "$TIER" ]] && exit 0
 
-write_signal_file "$TIER" "$PCT" "$QUOTA_SOURCE"
+write_signal_file "$TIER" "$PCT" "$ACTIVE_SOURCE"
+
+# Format reset date for weekly messages (shorten ISO timestamp to date only)
+weekly_reset_date() {
+    printf '%s' "${WEEKLY_RESETS_AT%%T*}"
+}
 
 case "$TIER" in
     WARN)
+        if [[ "$ACTIVE_SOURCE" == "seven_day" ]]; then
+            emit_context_injection "HANDOFF_SIGNAL: WEEKLY limit at ${PCT}% (WARN) — resets $(weekly_reset_date). Estimate cost before starting large tasks."
+        fi
         exit 0
         ;;
     PREPARE)
@@ -47,7 +76,11 @@ case "$TIER" in
         exit 2
         ;;
     EMERGENCY)
-        printf '{"decision":"block","reason":"Quota at %s%% — critical limit. Session must end. New session required."}' "$PCT" >&2
+        if [[ "$ACTIVE_SOURCE" == "seven_day" ]]; then
+            printf '{"decision":"block","reason":"WEEKLY quota at %s%% — weekly limit reached. New session will also be blocked until %s."}' "$PCT" "$(weekly_reset_date)" >&2
+        else
+            printf '{"decision":"block","reason":"Quota at %s%% — critical limit. Session must end. New session required."}' "$PCT" >&2
+        fi
         exit 2
         ;;
 esac

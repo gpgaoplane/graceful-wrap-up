@@ -67,6 +67,20 @@ rm -f "$TMP_CTR"
 [[ "$(get_quota_heuristic 60)" == "92" ]] && ok "heuristic 60 = 92"    || fail "heuristic 60: got $(get_quota_heuristic 60)"
 [[ "$(get_quota_heuristic 80)" == "96" ]] && ok "heuristic 80 = 96"    || fail "heuristic 80: got $(get_quota_heuristic 80)"
 
+# tier_from_weekly_pct
+[[ "$(tier_from_weekly_pct 94)"  == "" ]]          && ok "weekly 94% = no tier"    || fail "weekly 94% should be empty, got '$(tier_from_weekly_pct 94)'"
+[[ "$(tier_from_weekly_pct 95)"  == "WARN" ]]      && ok "weekly 95% = WARN"       || fail "weekly 95% should be WARN, got '$(tier_from_weekly_pct 95)'"
+[[ "$(tier_from_weekly_pct 98)"  == "WARN" ]]      && ok "weekly 98% = WARN"       || fail "weekly 98% should be WARN, got '$(tier_from_weekly_pct 98)'"
+[[ "$(tier_from_weekly_pct 99)"  == "EMERGENCY" ]] && ok "weekly 99% = EMERGENCY"  || fail "weekly 99% should be EMERGENCY, got '$(tier_from_weekly_pct 99)'"
+[[ "$(tier_from_weekly_pct 100)" == "EMERGENCY" ]] && ok "weekly 100% = EMERGENCY" || fail "weekly 100% should be EMERGENCY"
+
+# tier_severity
+[[ "$(tier_severity "")"          == "0" ]] && ok "severity ''=0"          || fail "severity '': got $(tier_severity '')"
+[[ "$(tier_severity "WARN")"      == "1" ]] && ok "severity WARN=1"        || fail "severity WARN: got $(tier_severity WARN)"
+[[ "$(tier_severity "PREPARE")"   == "2" ]] && ok "severity PREPARE=2"     || fail "severity PREPARE: got $(tier_severity PREPARE)"
+[[ "$(tier_severity "STOP")"      == "3" ]] && ok "severity STOP=3"        || fail "severity STOP: got $(tier_severity STOP)"
+[[ "$(tier_severity "EMERGENCY")" == "4" ]] && ok "severity EMERGENCY=4"   || fail "severity EMERGENCY: got $(tier_severity EMERGENCY)"
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [[ $FAIL -eq 0 ]]
