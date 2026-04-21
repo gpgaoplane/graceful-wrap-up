@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+# install.sh — deploys smart-quota-tracker to ~/.claude/
+# Safe to re-run: idempotent. Does not overwrite existing wrap-up.md without backup.
+set -euo pipefail
+
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CLAUDE_DIR="$HOME/.claude"
+HOOKS_DIR="$CLAUDE_DIR/hooks"
+SKILLS_DIR="$CLAUDE_DIR/skills"
+COMMANDS_DIR="$CLAUDE_DIR/commands"
+SETTINGS="$CLAUDE_DIR/settings.json"
+CONFIG="$CLAUDE_DIR/.handoff-config"
+
+# Find working Python (python3 on Windows Git Bash may be an MS Store alias)
+_find_py() {
+    for _p in python python3 py; do
+        local _c; _c=$(command -v "$_p" 2>/dev/null) || continue
+        "$_c" -c "import sys; sys.exit(0)" 2>/dev/null && echo "$_c" && return 0
+    done
+    echo "Error: Python not found — required for settings.json merging" >&2; return 1
+}
+PY=$(_find_py)
+
+echo "Installing smart-quota-tracker..."
+
+# 1. Create target dirs
+mkdir -p "$HOOKS_DIR" "$SKILLS_DIR" "$COMMANDS_DIR"
+
+# 2. Deploy hook scripts
+for hook in handoff-lib.sh pre-tool-use-handoff pre-compact-handoff stop-handoff stop-failure-handoff; do
+    cp "$REPO_DIR/src/hooks/$hook" "$HOOKS_DIR/$hook"
+    chmod +x "$HOOKS_DIR/$hook"
+    echo "  installed: hooks/$hook"
+done
+
+# 3. Deploy skill
+cp "$REPO_DIR/src/skills/graceful-wrap-up.md" "$SKILLS_DIR/graceful-wrap-up.md"
+echo "  installed: skills/graceful-wrap-up.md"
+
+# 4. Deploy command (backup existing wrap-up.md)
+if [[ -f "$COMMANDS_DIR/wrap-up.md" ]]; then
+    cp "$COMMANDS_DIR/wrap-up.md" "$COMMANDS_DIR/wrap-up.md.bak"
+    echo "  backed up: commands/wrap-up.md -> wrap-up.md.bak"
+fi
+cp "$REPO_DIR/src/commands/wrap-up.md" "$COMMANDS_DIR/wrap-up.md"
+echo "  installed: commands/wrap-up.md"
+
+# 5. Write .handoff-config if not present
+if [[ ! -f "$CONFIG" ]]; then
+    echo "plan=max5" > "$CONFIG"
+    echo "  created: .handoff-config (plan=max5 — edit to match your subscription)"
+fi
+
+# 6. Merge hook entries into settings.json
+"$PY" << PYEOF
+import json, sys, os
+
+settings_path = os.path.expanduser('~/.claude/settings.json')
+with open(settings_path) as f:
+    settings = json.load(f)
+
+hooks = settings.setdefault('hooks', {})
+
+def add_hook(event, matcher, command, timeout):
+    entries = hooks.setdefault(event, [])
+    for e in entries:
+        for h in e.get('hooks', []):
+            if h.get('command') == command:
+                return False  # already present
+    entries.append({"matcher": matcher, "hooks": [{"type": "command", "command": command, "timeout": timeout}]})
+    return True
+
+added = []
+if add_hook('PreToolUse',  '', 'bash ~/.claude/hooks/pre-tool-use-handoff',  8000):  added.append('PreToolUse')
+if add_hook('PreCompact',  '', 'bash ~/.claude/hooks/pre-compact-handoff',   5000):  added.append('PreCompact')
+if add_hook('Stop',        '', 'bash ~/.claude/hooks/stop-handoff',          10000): added.append('Stop')
+if add_hook('StopFailure', 'rate_limit',    'bash ~/.claude/hooks/stop-failure-handoff', 15000): added.append('StopFailure/rate_limit')
+if add_hook('StopFailure', 'billing_error', 'bash ~/.claude/hooks/stop-failure-handoff', 15000): added.append('StopFailure/billing_error')
+
+with open(settings_path, 'w') as f:
+    json.dump(settings, f, indent=2)
+
+if added:
+    print('  merged hooks:', ', '.join(added))
+else:
+    print('  hooks already present — no changes to settings.json')
+PYEOF
+
+echo ""
+echo "Installation complete."
+echo ""
+echo "Next steps:"
+echo "  1. Edit ~/.claude/.handoff-config and set plan= to match your subscription (pro/max5/max20)"
+echo "  2. Restart Claude Code for hook changes to take effect"
+echo "  3. In a session, test with: /graceful-wrap-up"
