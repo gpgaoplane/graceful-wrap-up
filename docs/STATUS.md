@@ -19,9 +19,11 @@ Implementation complete. Weekly quota detection merged. Ready for GitHub push an
 - [x] `tests/test-pre-tool-use.sh` — 13 tests passing
 - [x] Weekly quota detection (`feat/weekly-quota`): `tier_from_weekly_pct`, `get_weekly_quota_oauth`, `tier_severity` — merged to `feat/implementation`
 - [x] Installed and validated locally (`~/.claude/hooks/`, `~/.claude/skills/`, `settings.json`)
+- [x] Production bug fixes: WARN now emits context injection; STOP/EMERGENCY route to stdout additionalContext (confirmed works on exit 2); accelerated polling once any signal active; all messages self-contained with explicit artifact-writing instructions
 
 ## In Progress
 - Pending GitHub push (`git push` blocked by interactive auth — run `! git push` manually)
+- Production bug fixes applied (see Done below)
 
 ## Up Next
 - Push `feat/implementation` to remote
@@ -30,7 +32,7 @@ Implementation complete. Weekly quota detection merged. Ready for GitHub push an
 
 ## Test Results (last run)
 - `test-handoff-lib.sh`: 36/36 passed
-- `test-pre-tool-use.sh`: 13/13 passed
+- `test-pre-tool-use.sh`: 21/21 passed
 
 ## Known Issues / Notes
 - `seven_day_omelette` is an internal Anthropic codename for Claude Design features — excluded from detection

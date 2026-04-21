@@ -9,19 +9,19 @@ INPUT=$(cat)
 SID=$(printf '%s' "$INPUT" | grep -o '"session_id":"[^"]*"' | cut -d'"' -f4)
 export SESSION_ID="${SID:-unknown}"
 
-# Increment counter; skip check on non-10th calls
+# Increment counter
 COUNT=$(get_and_increment_call_count)
 
 # Re-block immediately if signal already STOP or EMERGENCY
 EXISTING_TIER=$(read_signal_tier)
 if [[ "$EXISTING_TIER" == "STOP" || "$EXISTING_TIER" == "EMERGENCY" ]]; then
-    printf '{"decision":"block","reason":"Session quota limit reached — start a new session to continue."}' >&2
+    emit_context_injection "HANDOFF_SIGNAL: BLOCKED — session quota limit reached. Do not use any more tools. Write AI_HANDOFF.md (include: git log --oneline -20, open tasks, blocking issues, key context) and RESUME_PROMPT.md (continuation instructions for next session). Then output 'SESSION ENDING' and stop."
     exit 2
 fi
 
-# Only check quota on every 10th call
+# Skip quota check on non-10th calls — UNLESS any signal already exists (accelerated polling)
 if ! should_check_this_call "$COUNT"; then
-    exit 0
+    [[ -z "$EXISTING_TIER" ]] && exit 0
 fi
 
 # --- Five-hour quota check (cascade: oauth → jsonl → heuristic) ---
@@ -63,23 +63,25 @@ weekly_reset_date() {
 case "$TIER" in
     WARN)
         if [[ "$ACTIVE_SOURCE" == "seven_day" ]]; then
-            emit_context_injection "HANDOFF_SIGNAL: WEEKLY limit at ${PCT}% (WARN) — resets $(weekly_reset_date). Estimate cost before starting large tasks."
+            emit_context_injection "HANDOFF_SIGNAL: WEEKLY quota at ${PCT}% (WARN) — resets $(weekly_reset_date). Estimate token cost before starting large tasks; avoid multi-step operations."
+        else
+            emit_context_injection "HANDOFF_SIGNAL: 5-hour quota at ${PCT}% (WARN). Estimate token cost before starting large tasks; prefer smaller focused operations."
         fi
         exit 0
         ;;
     PREPARE)
-        emit_context_injection "HANDOFF_SIGNAL: quota at ${PCT}% (PREPARE). Consider wrapping up current task. Run /wrap-up to generate handoff artifacts and start a fresh session."
+        emit_context_injection "HANDOFF_SIGNAL: quota at ${PCT}% (PREPARE). Finish current task step, then: (1) write AI_HANDOFF.md — include git log --oneline -20, open tasks, blocking issues; (2) write RESUME_PROMPT.md with continuation instructions; (3) start a new session."
         exit 0
         ;;
     STOP)
-        printf '{"decision":"block","reason":"Quota at %s%% — session approaching limit. Run /wrap-up now, then start a new session."}' "$PCT" >&2
+        emit_context_injection "HANDOFF_SIGNAL: STOP — quota at ${PCT}%. Do not start new tasks. Immediately: (1) write AI_HANDOFF.md (git log --oneline -20, open tasks, context); (2) write RESUME_PROMPT.md; (3) output 'SESSION ENDING — quota limit' and stop."
         exit 2
         ;;
     EMERGENCY)
         if [[ "$ACTIVE_SOURCE" == "seven_day" ]]; then
-            printf '{"decision":"block","reason":"WEEKLY quota at %s%% — weekly limit reached. New session will also be blocked until %s."}' "$PCT" "$(weekly_reset_date)" >&2
+            emit_context_injection "HANDOFF_SIGNAL: EMERGENCY — WEEKLY quota at ${PCT}%. Weekly limit reached; new sessions also blocked until $(weekly_reset_date). Write AI_HANDOFF.md and RESUME_PROMPT.md NOW, then stop."
         else
-            printf '{"decision":"block","reason":"Quota at %s%% — critical limit. Session must end. New session required."}' "$PCT" >&2
+            emit_context_injection "HANDOFF_SIGNAL: EMERGENCY — quota at ${PCT}%. Write AI_HANDOFF.md (git log --oneline -20, open tasks, critical context) and RESUME_PROMPT.md immediately. Session must end NOW."
         fi
         exit 2
         ;;

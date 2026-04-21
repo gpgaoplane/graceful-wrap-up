@@ -20,6 +20,23 @@ mkdir -p "$TMP/empty_projects"
 
 fake() { printf '{"session_id":"s1","hook_event_name":"PreToolUse","tool_name":"%s","tool_input":{}}' "${1:-Bash}"; }
 
+check_ac() {
+    # check_ac <label> <json> <required_substring>
+    local label="$1" json="$2" needle="$3"
+    /c/Python313/python -c "
+import json, sys
+try:
+    d = json.loads(sys.argv[1])
+    ac = str(d.get('hookSpecificOutput', {}).get('additionalContext', ''))
+    assert sys.argv[2] in ac, f'missing {sys.argv[2]!r} in: {ac}'
+    print('ok')
+except Exception as e:
+    print(f'fail: {e}')
+" "$json" "$needle" 2>/dev/null | grep -q ok \
+        && ok "$label" \
+        || fail "$label: bad JSON: $json"
+}
+
 # --- Calls 1-9: must exit 0, no signal file ---
 for i in $(seq 1 9); do
     fake "Bash" | SESSION_ID="s1" bash "$HOOK" >/dev/null 2>&1
@@ -33,7 +50,7 @@ fake "Bash" | SESSION_ID="s1" bash "$HOOK" >/dev/null 2>&1
 [[ $? -eq 0 ]] && ok "call 10 low heuristic exits 0" || fail "call 10 low: exit $?"
 [[ ! -f "$SIG" ]] && ok "call 10 low heuristic writes no signal" || fail "call 10: unexpected signal"
 
-# --- WARN tier: counter=39 → next call is 40 → heuristic 40→87% → WARN → exit 0, signal written ---
+# --- WARN tier: counter=39 → next call is 40 → heuristic 40→87% → WARN → exit 0, context injected ---
 printf 's1:39' > "$CTR"; rm -f "$SIG"
 OUT=$(fake "Bash" | SESSION_ID="s1" bash "$HOOK" 2>/dev/null)
 EXIT=$?
@@ -41,48 +58,48 @@ EXIT=$?
 [[ -f "$SIG" ]]          && ok "WARN tier writes signal"   || fail "WARN tier: signal missing"
 TIER=$(grep '^tier=' "$SIG" 2>/dev/null | cut -d= -f2)
 [[ "$TIER" == "WARN" ]]  && ok "WARN tier signal = WARN"   || fail "WARN tier signal: got '$TIER'"
-# WARN must produce no stdout output (silent injection)
-[[ -z "$OUT" ]]          && ok "WARN tier silent (no stdout)" || fail "WARN tier: unexpected stdout: $OUT"
+check_ac "WARN tier injects HANDOFF_SIGNAL" "$OUT" "HANDOFF_SIGNAL"
+check_ac "WARN tier injects WARN label"     "$OUT" "WARN"
+
+# --- Accelerated polling: after WARN signal, non-10th call still runs quota check ---
+printf 's1:40' > "$CTR"  # next call will be 41 (not a multiple of 10)
+# SIG still has tier=WARN from above
+OUT=$(fake "Bash" | SESSION_ID="s1" bash "$HOOK" 2>/dev/null)
+EXIT=$?
+[[ $EXIT -eq 0 ]] && ok "accelerated polling: call 41 with WARN signal exits 0" || fail "accelerated polling: exit $EXIT"
+[[ -n "$OUT" ]]   && ok "accelerated polling: call 41 still emits output (not skipped)" || fail "accelerated polling: expected output but got none"
 
 # --- PREPARE tier: counter=59 → next call 60 → heuristic 60→92% → PREPARE → exit 0, JSON context injected ---
 printf 's1:59' > "$CTR"; rm -f "$SIG"
 OUT=$(fake "Bash" | SESSION_ID="s1" bash "$HOOK" 2>/dev/null)
 EXIT=$?
 [[ $EXIT -eq 0 ]] && ok "PREPARE tier exits 0" || fail "PREPARE tier: exit $EXIT"
-# Verify JSON output contains additionalContext
-/c/Python313/python -c "
-import json, sys
-try:
-    d = json.loads(sys.argv[1])
-    ac = str(d.get('hookSpecificOutput', {}).get('additionalContext', ''))
-    assert 'HANDOFF_SIGNAL' in ac, f'missing HANDOFF_SIGNAL in: {ac}'
-    assert 'PREPARE' in ac, f'missing PREPARE in: {ac}'
-    print('ok')
-except Exception as e:
-    print(f'fail: {e}')
-" "$OUT" 2>/dev/null | grep -q ok \
-    && ok "PREPARE tier injects additionalContext JSON" \
-    || fail "PREPARE tier: bad JSON output: $OUT"
+check_ac "PREPARE tier injects HANDOFF_SIGNAL" "$OUT" "HANDOFF_SIGNAL"
+check_ac "PREPARE tier injects PREPARE label"  "$OUT" "PREPARE"
 
-# --- STOP tier: counter=79 → next call 80 → heuristic 80→96% → STOP → exit 2 (block) ---
+# --- STOP tier: counter=79 → next call 80 → heuristic 80→96% → STOP → exit 2, context injected ---
 printf 's1:79' > "$CTR"; rm -f "$SIG"
-fake "Bash" | SESSION_ID="s1" bash "$HOOK" >/dev/null 2>&1
+OUT=$(fake "Bash" | SESSION_ID="s1" bash "$HOOK" 2>/dev/null)
 EXIT=$?
 [[ $EXIT -eq 2 ]] && ok "STOP tier exits 2 (blocks tool call)" || fail "STOP tier: exit $EXIT (expected 2)"
+check_ac "STOP tier injects HANDOFF_SIGNAL"   "$OUT" "HANDOFF_SIGNAL"
+check_ac "STOP tier injects STOP label"       "$OUT" "STOP"
 
 # --- EMERGENCY re-block: signal already EMERGENCY → immediate block on any call ---
 printf 'tier=EMERGENCY\nquota=99\nsource=oauth\n' > "$SIG"
 printf 's1:1' > "$CTR"
-fake "Bash" | SESSION_ID="s1" bash "$HOOK" >/dev/null 2>&1
+OUT=$(fake "Bash" | SESSION_ID="s1" bash "$HOOK" 2>/dev/null)
 EXIT=$?
 [[ $EXIT -eq 2 ]] && ok "existing EMERGENCY signal re-blocks immediately" || fail "EMERGENCY re-block: exit $EXIT"
+check_ac "EMERGENCY re-block injects HANDOFF_SIGNAL" "$OUT" "HANDOFF_SIGNAL"
 
 # --- STOP re-block: signal already STOP → immediate block ---
 printf 'tier=STOP\nquota=96\nsource=oauth\n' > "$SIG"
 printf 's1:1' > "$CTR"
-fake "Bash" | SESSION_ID="s1" bash "$HOOK" >/dev/null 2>&1
+OUT=$(fake "Bash" | SESSION_ID="s1" bash "$HOOK" 2>/dev/null)
 EXIT=$?
 [[ $EXIT -eq 2 ]] && ok "existing STOP signal re-blocks immediately" || fail "STOP re-block: exit $EXIT"
+check_ac "STOP re-block injects HANDOFF_SIGNAL" "$OUT" "HANDOFF_SIGNAL"
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
