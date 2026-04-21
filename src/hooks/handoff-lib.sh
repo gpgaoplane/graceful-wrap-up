@@ -39,6 +39,76 @@ tier_from_pct() {
 }
 
 # --------------------------------------------------------------------------
+# tier_from_weekly_pct <percentage>
+# Weekly window uses two levels only: WARN at 95%, EMERGENCY at 99%.
+# No PREPARE/STOP — weekly exhaustion has no heuristic fallback and is
+# non-recoverable within the session, so the escalation is direct.
+# --------------------------------------------------------------------------
+tier_from_weekly_pct() {
+    local pct="${1:-0}"
+    if   (( pct >= 99 )); then echo "EMERGENCY"
+    elif (( pct >= 95 )); then echo "WARN"
+    else echo ""
+    fi
+}
+
+# --------------------------------------------------------------------------
+# tier_severity <tier>
+# Returns numeric weight for comparing which tier is more severe.
+# --------------------------------------------------------------------------
+tier_severity() {
+    case "${1:-}" in
+        EMERGENCY) echo 4 ;;
+        STOP)      echo 3 ;;
+        PREPARE)   echo 2 ;;
+        WARN)      echo 1 ;;
+        *)         echo 0 ;;
+    esac
+}
+
+# --------------------------------------------------------------------------
+# get_weekly_quota_oauth
+# Reads seven_day.utilization from the OAuth usage endpoint.
+# Sets WEEKLY_RESETS_AT global to the ISO reset timestamp.
+# Returns integer 0-100 or "" if unavailable.
+# --------------------------------------------------------------------------
+get_weekly_quota_oauth() {
+    WEEKLY_RESETS_AT=""
+    [[ -f "$CREDENTIALS_FILE" ]] || return 0
+    local token; token=$(_get_credentials_field "claudeAiOauth.accessToken") || return 0
+    [[ -z "$token" ]] && return 0
+
+    local resp
+    resp=$(curl -sf --max-time 5 \
+        -H "Authorization: Bearer ${token}" \
+        -H "anthropic-beta: oauth-2025-04-20" \
+        -H "Content-Type: application/json" \
+        "https://api.anthropic.com/api/oauth/usage" 2>/dev/null) || return 0
+    [[ -z "$resp" ]] && return 0
+
+    local py; py=$(find_python) || return 0
+    "$py" - <<PYEOF 2>/dev/null
+import json, sys
+try:
+    d = json.loads('''${resp}''')
+    sd = d.get('seven_day', {})
+    if not isinstance(sd, dict):
+        print('')
+        sys.exit(0)
+    util = sd.get('utilization')
+    resets = sd.get('resets_at', '')
+    if util is not None:
+        v = float(util)
+        pct = int(v * 100) if v <= 1.0 else int(v)
+        print(f'{pct}|{resets}')
+    else:
+        print('')
+except Exception:
+    print('')
+PYEOF
+}
+
+# --------------------------------------------------------------------------
 # write_signal_file <tier> <pct> <source>
 # --------------------------------------------------------------------------
 write_signal_file() {
