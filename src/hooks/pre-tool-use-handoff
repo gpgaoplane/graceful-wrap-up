@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/handoff-lib.sh"
+
+# Read stdin JSON; extract session_id
+INPUT=$(cat)
+SID=$(printf '%s' "$INPUT" | grep -o '"session_id":"[^"]*"' | cut -d'"' -f4)
+export SESSION_ID="${SID:-unknown}"
+
+# Increment counter; skip check on non-10th calls
+COUNT=$(get_and_increment_call_count)
+
+# Re-block immediately if signal already STOP or EMERGENCY
+EXISTING_TIER=$(read_signal_tier)
+if [[ "$EXISTING_TIER" == "STOP" || "$EXISTING_TIER" == "EMERGENCY" ]]; then
+    printf '{"decision":"block","reason":"Session quota limit reached — start a new session to continue."}' >&2
+    exit 2
+fi
+
+# Only check quota on every 10th call
+if ! should_check_this_call "$COUNT"; then
+    exit 0
+fi
+
+# Get quota via cascade (QUOTA_SOURCE set as side-effect inside subshell, pre-declare for set -u)
+QUOTA_SOURCE="none"
+PCT=$(get_quota "$COUNT")
+[[ -z "$PCT" ]] && exit 0
+
+TIER=$(tier_from_pct "$PCT")
+[[ -z "$TIER" ]] && exit 0
+
+write_signal_file "$TIER" "$PCT" "$QUOTA_SOURCE"
+
+case "$TIER" in
+    WARN)
+        exit 0
+        ;;
+    PREPARE)
+        emit_context_injection "HANDOFF_SIGNAL: quota at ${PCT}% (PREPARE). Consider wrapping up current task. Run /wrap-up to generate handoff artifacts and start a fresh session."
+        exit 0
+        ;;
+    STOP)
+        printf '{"decision":"block","reason":"Quota at %s%% — session approaching limit. Run /wrap-up now, then start a new session."}' "$PCT" >&2
+        exit 2
+        ;;
+    EMERGENCY)
+        printf '{"decision":"block","reason":"Quota at %s%% — critical limit. Session must end. New session required."}' "$PCT" >&2
+        exit 2
+        ;;
+esac
+
+exit 0

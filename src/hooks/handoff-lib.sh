@@ -194,16 +194,18 @@ PYEOF
 get_quota_jsonl() {
     local limit; limit=$(_get_plan_limit)
     local py; py=$(find_python) || return 0
+    local projects_override="${HANDOFF_PROJECTS_DIR:-}"
 
-    "$py" - "$limit" <<'PYEOF' 2>/dev/null
+    "$py" - "$limit" "$projects_override" <<'PYEOF' 2>/dev/null
 import json, os, glob, sys
 from datetime import datetime, timezone, timedelta
 
 limit = int(sys.argv[1])
+projects_override = sys.argv[2] if len(sys.argv) > 2 else ''
 cutoff = datetime.now(timezone.utc) - timedelta(hours=5)
 total = 0
 
-projects_dir = os.path.join(os.path.expanduser('~'), '.claude', 'projects')
+projects_dir = projects_override if projects_override else os.path.join(os.path.expanduser('~'), '.claude', 'projects')
 pattern = os.path.join(projects_dir, '**', '*.jsonl')
 
 for path in glob.glob(pattern, recursive=True):
