@@ -5,11 +5,13 @@ This is the primary Codex entrypoint for this repo.
 Read files in this order before doing meaningful work:
 
 1. `AI_AGENTS.md`
-2. `.codex/CODEX.md`
-3. `.codex/memory/session_state.md`
-4. `.codex/memory/project_context.md`
-5. `docs/agents/codex.md`
-6. Other plans or logs only as needed
+2. `.collab/INDEX.md` — file registry; delta-read against your watermark
+3. `.collab/ROUTING.md` and `.collab/PROTOCOL.md` — fan-out matrix + End-of-Task Receipt format
+4. `.codex/CODEX.md`
+5. `.codex/memory/state.md`
+6. `.codex/memory/context.md`
+7. `docs/agents/codex.md`
+8. Other plans or logs only as needed
 
 ## Purpose
 
@@ -19,14 +21,14 @@ Read files in this order before doing meaningful work:
 
 ## Memory Files
 
-- `project_context.md`
+- `context.md`
   - durable project truths only
-- `session_state.md`
+- `state.md`
   - current live state only
   - default update target when unsure
-- `decision_log.md`
+- `decisions.md`
   - append-only major decisions
-- `failure_patterns.md`
+- `pitfalls.md`
   - repeatable pitfalls, causes, and workarounds
 
 ## Update Rules
@@ -34,15 +36,15 @@ Read files in this order before doing meaningful work:
 When something changes, route it like this:
 
 - new task, progress, pause point, branch status, next step:
-  - update `session_state.md`
+  - update `state.md`
 - new durable project truth:
-  - update `project_context.md`
+  - update `context.md`
 - new project decision:
-  - append to `decision_log.md`
+  - append to `decisions.md`
 - new recurring issue or workaround:
-  - append to `failure_patterns.md`
+  - append to `pitfalls.md`
 
-If unsure, update `session_state.md`.
+If unsure, update `state.md`.
 
 ## Shared File Rules
 
