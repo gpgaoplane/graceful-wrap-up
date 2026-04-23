@@ -19,35 +19,44 @@ PY=$(_find_py)
 echo "Uninstalling graceful-wrap-up..."
 
 # 1. Remove hook scripts
-for hook in handoff-lib.sh pre-tool-use-handoff pre-compact-handoff stop-handoff stop-failure-handoff; do
+for hook in handoff-lib.sh user-prompt-submit-handoff pre-tool-use-handoff pre-compact-handoff stop-handoff stop-failure-handoff; do
     rm -f "$HOOKS_DIR/$hook" && echo "  removed: hooks/$hook"
 done
 
-# 2. Remove skill
-rm -f "$CLAUDE_DIR/skills/graceful-wrap-up.md" && echo "  removed: skills/graceful-wrap-up.md"
+# 2. Remove skills
+for skill in graceful-wrap-up.md cross-validate-state.md; do
+    rm -f "$CLAUDE_DIR/skills/$skill" && echo "  removed: skills/$skill"
+done
 
-# 3. Restore wrap-up.md backup if it exists
-if [[ -f "$CLAUDE_DIR/commands/wrap-up.md.bak" ]]; then
-    mv "$CLAUDE_DIR/commands/wrap-up.md.bak" "$CLAUDE_DIR/commands/wrap-up.md"
-    echo "  restored: commands/wrap-up.md from backup"
-else
-    rm -f "$CLAUDE_DIR/commands/wrap-up.md" && echo "  removed: commands/wrap-up.md"
-fi
+# 3. Restore command backups if they exist
+for command in wrap-up.md cross-validate.md; do
+    if [[ -f "$CLAUDE_DIR/commands/$command.bak" ]]; then
+        mv "$CLAUDE_DIR/commands/$command.bak" "$CLAUDE_DIR/commands/$command"
+        echo "  restored: commands/$command from backup"
+    else
+        rm -f "$CLAUDE_DIR/commands/$command" && echo "  removed: commands/$command"
+    fi
+done
 
 # 4. Remove config and state files
 rm -f "$CLAUDE_DIR/.handoff-config" "$CLAUDE_DIR/.handoff-signal" "$CLAUDE_DIR/.handoff-counter"
 echo "  removed: state files"
 
 # 5. Remove hook entries from settings.json
-"$PY" << PYEOF
+SETTINGS_PATH="$SETTINGS" "$PY" << PYEOF
 import json, os
 
-settings_path = os.path.expanduser('~/.claude/settings.json')
+settings_path = os.environ['SETTINGS_PATH']
+if not os.path.exists(settings_path):
+    print('  settings.json not found — nothing to remove')
+    raise SystemExit(0)
+
 with open(settings_path) as f:
     settings = json.load(f)
 
 hooks = settings.get('hooks', {})
 handoff_commands = {
+    'bash ~/.claude/hooks/user-prompt-submit-handoff',
     'bash ~/.claude/hooks/pre-tool-use-handoff',
     'bash ~/.claude/hooks/pre-compact-handoff',
     'bash ~/.claude/hooks/stop-handoff',

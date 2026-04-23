@@ -26,24 +26,35 @@ echo "Installing graceful-wrap-up..."
 # 1. Create target dirs
 mkdir -p "$HOOKS_DIR" "$SKILLS_DIR" "$COMMANDS_DIR"
 
+# Ensure settings.json exists before merge logic runs
+if [[ ! -f "$SETTINGS" ]]; then
+    mkdir -p "$(dirname "$SETTINGS")"
+    printf '{\n  "hooks": {}\n}\n' > "$SETTINGS"
+    echo "  created: settings.json"
+fi
+
 # 2. Deploy hook scripts
-for hook in handoff-lib.sh pre-tool-use-handoff pre-compact-handoff stop-handoff stop-failure-handoff; do
+for hook in handoff-lib.sh user-prompt-submit-handoff pre-tool-use-handoff pre-compact-handoff stop-handoff stop-failure-handoff; do
     cp "$REPO_DIR/src/hooks/$hook" "$HOOKS_DIR/$hook"
     chmod +x "$HOOKS_DIR/$hook"
     echo "  installed: hooks/$hook"
 done
 
-# 3. Deploy skill
-cp "$REPO_DIR/src/skills/graceful-wrap-up.md" "$SKILLS_DIR/graceful-wrap-up.md"
-echo "  installed: skills/graceful-wrap-up.md"
+# 3. Deploy skills
+for skill in graceful-wrap-up.md cross-validate-state.md; do
+    cp "$REPO_DIR/src/skills/$skill" "$SKILLS_DIR/$skill"
+    echo "  installed: skills/$skill"
+done
 
-# 4. Deploy command (backup existing wrap-up.md)
-if [[ -f "$COMMANDS_DIR/wrap-up.md" ]]; then
-    cp "$COMMANDS_DIR/wrap-up.md" "$COMMANDS_DIR/wrap-up.md.bak"
-    echo "  backed up: commands/wrap-up.md -> wrap-up.md.bak"
-fi
-cp "$REPO_DIR/src/commands/wrap-up.md" "$COMMANDS_DIR/wrap-up.md"
-echo "  installed: commands/wrap-up.md"
+# 4. Deploy commands (backup existing commands first)
+for command in wrap-up.md cross-validate.md; do
+    if [[ -f "$COMMANDS_DIR/$command" ]]; then
+        cp "$COMMANDS_DIR/$command" "$COMMANDS_DIR/$command.bak"
+        echo "  backed up: commands/$command -> $command.bak"
+    fi
+    cp "$REPO_DIR/src/commands/$command" "$COMMANDS_DIR/$command"
+    echo "  installed: commands/$command"
+done
 
 # 5. Write .handoff-config if not present
 if [[ ! -f "$CONFIG" ]]; then
@@ -52,10 +63,10 @@ if [[ ! -f "$CONFIG" ]]; then
 fi
 
 # 6. Merge hook entries into settings.json
-"$PY" << PYEOF
+SETTINGS_PATH="$SETTINGS" "$PY" << PYEOF
 import json, sys, os
 
-settings_path = os.path.expanduser('~/.claude/settings.json')
+settings_path = os.environ['SETTINGS_PATH']
 with open(settings_path) as f:
     settings = json.load(f)
 
@@ -72,9 +83,10 @@ def add_hook(event, matcher, command, timeout):
     return True
 
 added = []
-if add_hook('PreToolUse',  '', 'bash ~/.claude/hooks/pre-tool-use-handoff',  8000):  added.append('PreToolUse')
-if add_hook('PreCompact',  '', 'bash ~/.claude/hooks/pre-compact-handoff',   5000):  added.append('PreCompact')
-if add_hook('Stop',        '', 'bash ~/.claude/hooks/stop-handoff',          10000): added.append('Stop')
+if add_hook('UserPromptSubmit', '', 'bash ~/.claude/hooks/user-prompt-submit-handoff', 10000): added.append('UserPromptSubmit')
+if add_hook('PreToolUse',       '', 'bash ~/.claude/hooks/pre-tool-use-handoff',        8000):  added.append('PreToolUse')
+if add_hook('PreCompact',       '', 'bash ~/.claude/hooks/pre-compact-handoff',         5000):  added.append('PreCompact')
+if add_hook('Stop',             '', 'bash ~/.claude/hooks/stop-handoff',               15000):  added.append('Stop')
 if add_hook('StopFailure', 'rate_limit',    'bash ~/.claude/hooks/stop-failure-handoff', 15000): added.append('StopFailure/rate_limit')
 if add_hook('StopFailure', 'billing_error', 'bash ~/.claude/hooks/stop-failure-handoff', 15000): added.append('StopFailure/billing_error')
 
@@ -93,4 +105,4 @@ echo ""
 echo "Next steps:"
 echo "  1. Edit ~/.claude/.handoff-config and set plan= to match your subscription (pro/max5/max20)"
 echo "  2. Restart Claude Code for hook changes to take effect"
-echo "  3. In a session, test with: /graceful-wrap-up"
+echo "  3. In a session, test with: /graceful-wrap-up or /cross-validate"
