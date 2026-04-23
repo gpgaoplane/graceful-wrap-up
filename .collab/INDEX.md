@@ -2,7 +2,7 @@
 status: active
 type: index
 owner: shared
-last-updated: 2026-04-23T13:43:49-04:00
+last-updated: 2026-04-23T15:06:53-04:00
 read-if: "session start, or before reading another agent's files"
 skip-if: "never"
 ---
@@ -12,10 +12,10 @@ skip-if: "never"
 <!-- collab:index:start -->
 | path | type | owner | status | last-updated |
 |------|------|-------|--------|--------------|
-| .claude/memory/state.md | state | claude | active | 2026-04-22T00:00:00-05:00 |
-| .claude/memory/context.md | context | claude | active | 2026-04-22T00:00:00-05:00 |
-| .claude/memory/decisions.md | decisions | claude | active | 2026-04-22T00:00:00-05:00 |
-| .claude/memory/pitfalls.md | pitfalls | claude | active | 2026-04-22T00:00:00-05:00 |
+| .claude/memory/state.md | state | claude | active | 2026-04-23T15:01:47-04:00 |
+| .claude/memory/context.md | context | claude | active | 2026-04-23T15:01:47-04:00 |
+| .claude/memory/decisions.md | decisions | claude | active | 2026-04-23T15:01:47-04:00 |
+| .claude/memory/pitfalls.md | pitfalls | claude | active | 2026-04-23T15:01:47-04:00 |
 | GEMINI.md | adapter | gemini | active | 2026-04-22T00:00:00-05:00 |
 | docs/agents/gemini.md | work-log | gemini | active | 2026-04-22T00:00:00-05:00 |
 | .gemini/memory/state.md | state | gemini | active | 2026-04-22T00:00:00-05:00 |
