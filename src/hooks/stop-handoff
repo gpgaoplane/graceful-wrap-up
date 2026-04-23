@@ -1,50 +1,95 @@
 #!/usr/bin/env bash
-# Stop hook: appends git snapshot to AI_HANDOFF.md if signal exists.
-# Does nothing on clean sessions with no signal — zero cost.
 set -uo pipefail
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/handoff-lib.sh"
 
 INPUT=$(cat)
-TIER=$(read_signal_tier)
-[[ -z "$TIER" ]] && exit 0
-
+SID=$(printf '%s' "$INPUT" | grep -o '"session_id":"[^"]*"' | cut -d'"' -f4)
 CWD=$(printf '%s' "$INPUT" | grep -o '"cwd":"[^"]*"' | cut -d'"' -f4)
-CWD="${CWD:-.}"
-cd "$CWD" 2>/dev/null || true
+export SESSION_ID="${SID:-unknown}"
+CWD="${CWD:-$(pwd)}"
 TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-HANDOFF_FILE="${CWD}/AI_HANDOFF.md"
 
-GIT_SECTION=""
-if git rev-parse --git-dir &>/dev/null 2>&1; then
-    BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
-    STATUS=$(git status --porcelain 2>/dev/null || echo "(unavailable)")
-    DIFF_STAT=$(git diff --stat HEAD 2>/dev/null || echo "(no uncommitted changes)")
-    LOG=$(git log --oneline -10 2>/dev/null || echo "(no log)")
-    GIT_SECTION="
-## Git Snapshot (stop-handoff hook — ${TIMESTAMP})
-**Branch:** ${BRANCH}
+discard_turn_state_if_session_mismatch "$SESSION_ID"
+discard_turn_state_if_expired
 
-### Working Tree
-\`\`\`
-${STATUS}
-\`\`\`
-### Diff Summary
-\`\`\`
-${DIFF_STAT}
-\`\`\`
-### Recent Commits
-\`\`\`
-${LOG}
-\`\`\`"
+EXISTING_TIER=$(read_signal_tier)
+EXISTING_SOURCE=$(read_signal_field source)
+
+TURN_STATE_PRESENT=false
+[[ -f "$(turn_state_file)" ]] && TURN_STATE_PRESENT=true
+
+PRE_TURN_PCT=$(read_turn_state_field pre_turn_quota_pct)
+PREDICTED_RISK_BAND=$(read_turn_state_field predicted_risk_band)
+PREDICTED_COST_RANGE=$(read_turn_state_field predicted_cost_range)
+PREDICTED_CONFIDENCE=$(read_turn_state_field predicted_confidence)
+PREDICTED_REASON_CODES=$(read_turn_state_field predicted_reason_codes)
+TURN_OPEN=$(read_turn_state_field turn_open)
+
+QUOTA_RESULT=$(get_quota_state 0)
+POST_PCT="${QUOTA_RESULT%%|*}"
+QUOTA_SOURCE="${QUOTA_RESULT##*|}"
+[[ "$POST_PCT" == "$QUOTA_SOURCE" ]] && QUOTA_SOURCE="none"
+POST_TIER=""
+[[ -n "$POST_PCT" ]] && POST_TIER=$(tier_from_pct "$POST_PCT")
+
+WEEKLY_RESULT=$(get_weekly_quota_oauth 2>/dev/null || echo "")
+WEEKLY_PCT="${WEEKLY_RESULT%%|*}"
+WEEKLY_RESETS_AT="${WEEKLY_RESULT##*|}"
+[[ "$WEEKLY_PCT" == "$WEEKLY_RESETS_AT" ]] && WEEKLY_RESETS_AT=""
+WEEKLY_TIER=""
+[[ -n "$WEEKLY_PCT" && "$WEEKLY_PCT" =~ ^[0-9]+$ ]] && WEEKLY_TIER=$(tier_from_weekly_pct "$WEEKLY_PCT")
+
+FIVEHR_SEV=$(tier_severity "$POST_TIER")
+WEEKLY_SEV=$(tier_severity "$WEEKLY_TIER")
+POST_SOURCE="$QUOTA_SOURCE"
+if (( WEEKLY_SEV >= FIVEHR_SEV && WEEKLY_SEV > 0 )); then
+    POST_TIER="$WEEKLY_TIER"
+    POST_PCT="$WEEKLY_PCT"
+    POST_SOURCE="seven_day"
 fi
 
-if [[ -f "$HANDOFF_FILE" ]]; then
-    printf '%s\n' "$GIT_SECTION" >> "$HANDOFF_FILE"
-else
-    printf '# AI Handoff — %s\n\n## Source\nstop-hook-only (agent did not write artifacts)\n\n## Tier\n%s\n%s\n' \
-        "$TIMESTAMP" "$TIER" "$GIT_SECTION" > "$HANDOFF_FILE"
+QUOTA_AVAILABLE=false
+if [[ -n "$POST_PCT" || -n "$WEEKLY_PCT" ]]; then
+    QUOTA_AVAILABLE=true
 fi
 
-rm -f "$HANDOFF_SIGNAL_FILE" "$HANDOFF_COUNTER_FILE"
+if [[ "$TURN_STATE_PRESENT" == true ]]; then
+    ACTUAL_DELTA_PCT=$(non_negative_pct_delta "$PRE_TURN_PCT" "$POST_PCT")
+    TELEMETRY_LINE=$(build_telemetry_line \
+        "$TIMESTAMP" \
+        "$SESSION_ID" \
+        "conversation" \
+        "${PRE_TURN_PCT:-}" \
+        "${POST_PCT:-}" \
+        "$ACTUAL_DELTA_PCT" \
+        "${PREDICTED_RISK_BAND:-}" \
+        "${PREDICTED_COST_RANGE:-}" \
+        "${PREDICTED_CONFIDENCE:-}" \
+        "${PREDICTED_REASON_CODES:-}" \
+        "${POST_TIER:-none}" \
+        "${POST_SOURCE:-$QUOTA_SOURCE}")
+    append_telemetry_line "$TELEMETRY_LINE"
+fi
+
+if [[ "$TURN_OPEN" == "true" || "$TURN_STATE_PRESENT" == true ]]; then
+    mark_turn_closed
+fi
+
+if [[ "$QUOTA_AVAILABLE" == true ]]; then
+    if [[ "$POST_TIER" == "STOP" ]]; then
+        write_signal_file "$POST_TIER" "$POST_PCT" "$POST_SOURCE"
+        write_stop_handoff_artifacts "$CWD" "$POST_TIER" "$POST_PCT" "$POST_SOURCE" "$TIMESTAMP"
+    elif [[ -n "$POST_TIER" ]]; then
+        if ! should_preserve_compaction_signal "$EXISTING_TIER" "$EXISTING_SOURCE" "$POST_TIER"; then
+            write_signal_file "$POST_TIER" "$POST_PCT" "$POST_SOURCE"
+        fi
+    else
+        if ! should_preserve_compaction_signal "$EXISTING_TIER" "$EXISTING_SOURCE" ""; then
+            clear_signal_file
+        fi
+    fi
+fi
+
 exit 0

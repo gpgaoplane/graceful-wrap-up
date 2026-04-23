@@ -7,11 +7,12 @@ source "$SCRIPT_DIR/handoff-lib.sh"
 INPUT=$(cat)
 SID=$(printf '%s' "$INPUT" | grep -o '"session_id":"[^"]*"' | cut -d'"' -f4)
 export SESSION_ID="${SID:-unknown}"
-export HOOK_EVENT_NAME="PreCompact"
 
 EXISTING=$(read_signal_tier)
-[[ "$EXISTING" == "STOP" || "$EXISTING" == "EMERGENCY" ]] && exit 0
+if (( $(tier_severity "$EXISTING") >= $(tier_severity "PREPARE") )); then
+    exit 0
+fi
 
 write_signal_file "PREPARE" "90+" "compaction"
-emit_context_injection "HANDOFF_SIGNAL: context compaction triggered — tier=PREPARE. Consider wrapping up current work."
+emit_system_message "HANDOFF_SIGNAL: context compaction triggered — tier=PREPARE. Consider wrapping up current work."
 exit 0

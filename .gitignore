@@ -2,6 +2,12 @@
 .handoff-signal
 .handoff-counter
 
+# Per-user Claude Code permission state
+.claude/settings.local.json
+
+# Dev scratch
+/tmp/
+
 # OS
 .DS_Store
 Thumbs.db
