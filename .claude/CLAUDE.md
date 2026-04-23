@@ -3,6 +3,13 @@
 ## First read
 Read `AI_AGENTS.md` at the repo root before starting any work session. It covers project state, multi-agent rules, architecture, and gotchas shared by all agents.
 
+## Shared collab surface
+After `AI_AGENTS.md`, read these before acting:
+- `.collab/INDEX.md` — file registry; delta-read against your watermark in `.claude/memory/state.md`
+- `.collab/ROUTING.md` — fan-out matrix for end-of-task file updates
+- `.collab/PROTOCOL.md` — End-of-Task Protocol and Receipt format
+- `.claude/memory/state.md` — your session-local state; update on pause or task boundary
+
 ## Claude-specific
 - Memory for this project: `~/.claude/projects/D--Projects-self-skills-graceful-wrap-up/memory/` — check `session_progress.md` and `project_context.md` for full history and known issues
 - After any significant work session, append to `docs/agents/claude.md`
