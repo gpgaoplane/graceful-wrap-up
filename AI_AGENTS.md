@@ -8,18 +8,20 @@ This is the single entry point for any AI agent (Claude, Codex, Antigravity, or 
 
 ## What This Project Is
 
-`graceful-wrap-up` — a quota-aware graceful handoff system for Claude Code. It detects approaching usage limits via a cascade (OAuth → JSONL → heuristics), injects signals into the agent conversation at threshold, hard-blocks tool calls at 95%+, and writes continuation artifacts (`AI_HANDOFF.md`, `RESUME_PROMPT.md`) so the next session can resume from zero context.
+`graceful-wrap-up` — a quota-aware graceful handoff system for Claude Code. It detects approaching usage limits via the OAuth usage endpoint (fail-open if unavailable), injects advisory signals into the agent conversation at threshold, and writes continuation artifacts (`AI_HANDOFF.md`, `RESUME_PROMPT.md`) so the next session can resume from zero context. Hooks are **warn-only** — no tier hard-blocks tool calls.
 
-**Repo:** https://github.com/gpgaoplane/smart-quota-tracker  
+**Repo:** https://github.com/gpgaoplane/graceful-wrap-up  
 **Working directory name:** `graceful-wrap-up`  
 **Primary platform:** Claude Code (hooks, skills, commands)  
-**Planned:** Codex adapter, Antigravity adapter
+**Current adapters:** Claude, Codex  
+**Deferred:** Antigravity adapter
 
 ---
 
 ## Current Implementation State
 
-Core system is complete and deployed locally. All production bugs fixed. Branch: `feat/implementation`.
+Stable production hook system is complete and deployed locally on `feat/implementation`.  
+Current active design branch: `codex/phase1-conversation-hooks`.
 
 | Component | File | Status |
 |-----------|------|--------|
@@ -30,10 +32,26 @@ Core system is complete and deployed locally. All production bugs fixed. Branch:
 | StopFailure hook | `src/hooks/stop-failure-handoff` | Done |
 | Agent skill | `src/skills/graceful-wrap-up.md` | Done |
 | Command | `src/commands/wrap-up.md` | Done |
+| Codex operating guide | `.codex/CODEX.md` | Done |
+| Codex memory | `.codex/memory/` | Done |
+| Cross-validation skill | `src/skills/cross-validate-state.md` | Done |
+| Cross-validation command | `src/commands/cross-validate.md` | Done |
 | Install / uninstall | `install.sh`, `uninstall.sh` | Done |
 | Tests | `tests/` | 57 passing |
 
 See `docs/STATUS.md` for full task history.
+
+### Current active design work
+
+The hook implementation in `src/hooks/` has **not** yet been changed to the new conversation-aware model.
+
+Active design work on `codex/phase1-conversation-hooks` includes:
+
+- `docs/plans/2026-04-21-phase1-conversation-hooks-design.md`
+- `docs/plans/2026-04-21-phase1-conversation-hooks-implementation.md`
+- Codex memory/state setup under `.codex/`
+
+That design work is intentionally paused pending Claude cross-validation.
 
 ---
 
@@ -48,13 +66,13 @@ Three AI agents work in this repo: **Claude** (Anthropic), **Codex** (OpenAI), *
 - Shared rules should live here once. Agent-specific files should mostly point back here and add only platform-specific notes.
 - Current adapters:
   - Claude: `.claude/CLAUDE.md`
-  - Codex: `.codex/BOOTSTRAP.md`
+  - Codex: `.codex/CODEX.md`
 
 ### Your onboarding checklist (run through this before every work session)
 
 1. Read this file (`AI_AGENTS.md`)
 2. Read `docs/agents/claude.md` — what Claude has built and what to watch out for
-3. Read `docs/agents/codex.md` — what Codex has done (empty until Codex onboards)
+3. Read `docs/agents/codex.md` — what Codex has done
 4. Read `docs/agents/antigravity.md` — what Antigravity has done (empty until it onboards)
 5. If your own log doesn't exist yet, create `docs/agents/<your-agent-name>.md` using the template at the bottom of this file
 6. Run `git log --oneline -10` to see recent commits
@@ -115,23 +133,34 @@ Do not edit another agent's log. Only append to your own.
 ## Architecture Overview
 
 ```
+UserPromptSubmit fires on every user prompt
+  → Approval keywords (STOP_NOW, HANDOFF_NOW, FINISH_THIS:, APPROVE_ONCE:, PLAN_IT:) parsed first
+  → Otherwise: OAuth quota check; tier assigned (WARN/PREPARE/STOP)
+  → STOP first-hit: warn user with 4 options, hold turn (exit 2), write stop_warn flag
+  → STOP re-submit: flag matches → allow through with "proceed normally" injection
+  → WARN/PREPARE/below: always exit 0 with advisory context
+
 PreToolUse hook fires on every tool call
-  → handoff-lib.sh: OAuth → JSONL → heuristic quota detection
-  → Tier assigned: WARN (85%) / PREPARE (90%) / STOP (95%) / EMERGENCY (98%)
+  → handoff-lib.sh: OAuth-only quota detection (fail-open if unavailable)
+  → Tier assigned: WARN (85-89%) / PREPARE (90-94%) / STOP (95%+)
   → Signal file written: ~/.claude/.handoff-signal
   → stdout → {"hookSpecificOutput":{"additionalContext":"HANDOFF_SIGNAL: ..."}}
-  → exit 2 at STOP/EMERGENCY (blocks the tool call)
+  → Always exit 0 — no hard-blocks, warn-only
 
 Agent reads HANDOFF_SIGNAL from context injection
   → Executes tier behavior per src/skills/graceful-wrap-up.md
-  → Writes AI_HANDOFF.md + RESUME_PROMPT.md at STOP/EMERGENCY
+  → Writes AI_HANDOFF.md + RESUME_PROMPT.md at STOP (95%+)
 
 Weekly quota (seven_day) checked in parallel via OAuth
   → tier_severity() picks the more severe of 5-hour vs weekly
-  → Weekly WARN at 95%, EMERGENCY at 99%
+  → Weekly caps at WARN (never escalates beyond — weekly exhaustion is informational, not blocking)
+
+Stop hook runs after every agent turn
+  → Re-checks quota, closes turn-state, writes telemetry
+  → At STOP (95%+): writes/appends AI_HANDOFF.md + RESUME_PROMPT.md
 
 StopFailure hook (rate_limit / billing_error)
-  → Emergency net: writes git-state artifacts if agent was cut off mid-session
+  → Abrupt-cutoff net: writes git-state artifacts if agent was cut off mid-session
 ```
 
 ---
@@ -144,7 +173,7 @@ These have all caused real bugs. Read them before touching the hook scripts.
 
 - **Subshell variable isolation**: Any function called via `$()` runs in a subshell — variable assignments inside do NOT propagate to the parent. Pre-declare globals before calling subshells. For multi-value returns, use `VALUE1|VALUE2` output format and parse with `${var%%|*}` / `${var##*|}` in the caller.
 
-- **JSONL test isolation**: `get_quota_jsonl` reads real `~/.claude/projects/` data. Tests must set `HANDOFF_PROJECTS_DIR` to an empty temp dir, otherwise they read live account data and return 100%.
+- **JSONL fallback has been removed**: quota detection is OAuth-only now. The old hardcoded plan-limit constants produced false EMERGENCY readings (~70× off for max5). Claude Code and the OAuth endpoint share the same Anthropic infrastructure — if Claude Code works, OAuth works.
 
 - **Hook dedup in install.sh**: The dedup check uses `(matcher, command)` pair — not command alone. `rate_limit` and `billing_error` StopFailure entries share the same command string; deduping by command only would drop one of them.
 
@@ -162,14 +191,17 @@ These have all caused real bugs. Read them before touching the hook scripts.
 src/hooks/handoff-lib.sh            shared utilities (sourced by all hooks)
 src/hooks/pre-tool-use-handoff      main quota detection; fires every call (accelerated after signal)
 src/hooks/pre-compact-handoff       context compaction → PREPARE signal
-src/hooks/stop-handoff              git snapshot appended to AI_HANDOFF.md on clean exit
-src/hooks/stop-failure-handoff      emergency artifact writer on rate_limit/billing_error
-src/skills/graceful-wrap-up.md      agent behavior protocol (WARN/PREPARE/STOP/EMERGENCY tiers)
+src/hooks/stop-handoff              post-turn reconciliation; writes handoff artifacts at STOP (95%+)
+src/hooks/stop-failure-handoff      abrupt-cutoff artifact writer on rate_limit/billing_error
+src/hooks/user-prompt-submit-handoff pre-turn prompt gate; approval-keyword parser; STOP two-step flow
+src/skills/graceful-wrap-up.md      agent behavior protocol (WARN/PREPARE/STOP tiers)
 src/commands/wrap-up.md             /wrap-up slash command
 install.sh                          deploys to ~/.claude/, merges hooks into settings.json
 uninstall.sh                        removes hooks, restores backup wrap-up.md
 tests/test-handoff-lib.sh           36 unit tests for handoff-lib.sh
 tests/test-pre-tool-use.sh          21 integration tests for pre-tool-use-handoff
+src/skills/cross-validate-state.md  reusable review/cross-validation protocol
+src/commands/cross-validate.md      /cross-validate slash command
 docs/STATUS.md                      full task checklist and known issues
 docs/agents/                        per-agent work logs — read these before working
 docs/plans/                         design doc and implementation plans (historical)
@@ -184,7 +216,7 @@ Point your platform's config file at this document. The exact filename varies by
 | Platform | Config file | Where it lives |
 |----------|-------------|----------------|
 | Claude Code | `CLAUDE.md` | `.claude/CLAUDE.md` (project) or `~/.claude/CLAUDE.md` (global) |
-| OpenAI Codex | Codex bootstrap doc | `.codex/BOOTSTRAP.md` |
+| OpenAI Codex | Codex operating guide | `.codex/CODEX.md` |
 | Antigravity | `GEMINI.md` | repo root |
 | Other | your platform's equivalent | wherever your platform looks |
 
