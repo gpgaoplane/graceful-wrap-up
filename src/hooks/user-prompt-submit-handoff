@@ -1,0 +1,161 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/handoff-lib.sh"
+
+export HOOK_EVENT_NAME="UserPromptSubmit"
+
+INPUT=$(cat)
+INPUT="${INPUT//$'\ufeff'/}"
+PY=$(find_python) || exit 0
+
+PARSED=$("$PY" -c '
+import json, sys
+raw = sys.argv[1].lstrip("\ufeff")
+try:
+    data = json.loads(raw)
+except Exception:
+    data = {}
+for key in ("session_id", "prompt", "permission_mode", "hook_event_name"):
+    value = data.get(key, "")
+    print(f"{key}={value}")
+' "$INPUT" 2>/dev/null)
+
+field_from_parsed() {
+    printf '%s\n' "$PARSED" | grep "^$1=" | cut -d= -f2-
+}
+
+SESSION_ID="$(field_from_parsed session_id)"
+PROMPT="$(field_from_parsed prompt)"
+export SESSION_ID="${SESSION_ID:-unknown}"
+
+discard_turn_state_if_session_mismatch "$SESSION_ID"
+discard_turn_state_if_expired
+
+APPROVAL_RESULT=$(parse_approval_prompt "$PROMPT")
+APPROVAL_ACTION=$(printf '%s\n' "$APPROVAL_RESULT" | grep '^action=' | cut -d= -f2)
+FORWARDED_PROMPT=$(printf '%s\n' "$APPROVAL_RESULT" | grep '^forwarded_prompt=' | cut -d= -f2-)
+APPROVAL_ERROR=$(printf '%s\n' "$APPROVAL_RESULT" | grep '^error=' | cut -d= -f2-)
+
+if [[ "$APPROVAL_ACTION" == "format_error" ]]; then
+    printf '%s\n' "$APPROVAL_ERROR"
+    exit 2
+fi
+
+QUOTA_RESULT=$(get_quota_state 0)
+PCT="${QUOTA_RESULT%%|*}"
+QUOTA_SOURCE="${QUOTA_RESULT##*|}"
+[[ "$PCT" == "$QUOTA_SOURCE" ]] && QUOTA_SOURCE="none"
+TIER=""
+[[ -n "$PCT" ]] && TIER=$(tier_from_pct "$PCT")
+
+WEEKLY_RESULT=$(get_weekly_quota_oauth 2>/dev/null || echo "")
+WEEKLY_PCT="${WEEKLY_RESULT%%|*}"
+WEEKLY_RESETS_AT="${WEEKLY_RESULT##*|}"
+[[ "$WEEKLY_PCT" == "$WEEKLY_RESETS_AT" ]] && WEEKLY_RESETS_AT=""
+WEEKLY_TIER=""
+[[ -n "$WEEKLY_PCT" && "$WEEKLY_PCT" =~ ^[0-9]+$ ]] && WEEKLY_TIER=$(tier_from_weekly_pct "$WEEKLY_PCT")
+
+FIVEHR_SEV=$(tier_severity "$TIER")
+WEEKLY_SEV=$(tier_severity "$WEEKLY_TIER")
+ACTIVE_SOURCE="$QUOTA_SOURCE"
+if (( WEEKLY_SEV >= FIVEHR_SEV && WEEKLY_SEV > 0 )); then
+    TIER="$WEEKLY_TIER"
+    PCT="$WEEKLY_PCT"
+    ACTIVE_SOURCE="seven_day"
+fi
+
+QUOTA_AVAILABLE=false
+if [[ -n "$PCT" || -n "$WEEKLY_PCT" ]]; then
+    QUOTA_AVAILABLE=true
+fi
+
+write_allowed_turn() {
+    local permission="$1" granted_at="$2" expires_at="$3"
+    mark_turn_open \
+        "$SESSION_ID" \
+        "$permission" \
+        "$granted_at" \
+        "$expires_at" \
+        "${PCT:-}" \
+        "" "" "${TIER:-}" \
+        "${ACTIVE_SOURCE:-$QUOTA_SOURCE}" \
+        "" ""
+}
+
+case "$APPROVAL_ACTION" in
+    stop_now)
+        clear_stop_warn
+        write_allowed_turn "none" 0 0
+        emit_context_injection "HANDOFF_SIGNAL: STOP_NOW accepted. Write AI_HANDOFF.md and RESUME_PROMPT.md now, then stop."
+        exit 0
+        ;;
+    handoff_now)
+        clear_stop_warn
+        write_allowed_turn "none" 0 0
+        emit_context_injection "HANDOFF_SIGNAL: HANDOFF_NOW accepted. Write AI_HANDOFF.md and RESUME_PROMPT.md now, then stop."
+        exit 0
+        ;;
+    finish_this)
+        clear_stop_warn
+        NOW_EPOCH=$(date -u +%s)
+        EXPIRES_AT=$(( NOW_EPOCH + 90 ))
+        write_allowed_turn "finish-this" "$NOW_EPOCH" "$EXPIRES_AT"
+        emit_context_injection "HANDOFF_SIGNAL: one-turn finish-this approval granted at ${PCT:-unknown}% (${TIER:-UNAVAILABLE}). Treat the user's message as approval syntax. The real request is: ${FORWARDED_PROMPT}. Complete only the smallest coherent unit, then wrap up."
+        exit 0
+        ;;
+    approve_once)
+        clear_stop_warn
+        NOW_EPOCH=$(date -u +%s)
+        EXPIRES_AT=$(( NOW_EPOCH + 90 ))
+        write_allowed_turn "continue" "$NOW_EPOCH" "$EXPIRES_AT"
+        emit_context_injection "HANDOFF_SIGNAL: one-turn approval granted at ${PCT:-unknown}% (${TIER:-UNAVAILABLE}). Treat the user's message as approval syntax. The real request is: ${FORWARDED_PROMPT}. Keep the response scoped to that request and do not broaden into adjacent work."
+        exit 0
+        ;;
+    plan_it)
+        clear_stop_warn
+        write_allowed_turn "none" 0 0
+        emit_context_injection "HANDOFF_SIGNAL: plan-it mode — quota at ${PCT:-unknown}% (${TIER:-UNAVAILABLE}). The request to plan: ${FORWARDED_PROMPT}. Without executing anything: (1) break the task into numbered steps; (2) identify which steps can complete within the remaining quota; (3) present the breakdown to the user; (4) wait for the user to confirm which steps to proceed with; (5) after executing confirmed steps, ask the user: continue to next step, or wrap up?"
+        exit 0
+        ;;
+esac
+
+if [[ "$QUOTA_AVAILABLE" != true ]]; then
+    write_allowed_turn "none" 0 0
+    exit 0
+fi
+
+WARNED_SESSION=$(read_stop_warn_session)
+
+case "$TIER" in
+    STOP)
+        if [[ "$WARNED_SESSION" == "$SESSION_ID" ]]; then
+            clear_stop_warn
+            write_allowed_turn "none" 0 0
+            emit_context_injection "HANDOFF_SIGNAL: quota at ${PCT}% (STOP) — proceeding by your choice. Respond to this request normally. Prepare handoff artifacts when done."
+            exit 0
+        fi
+        write_stop_warn
+        printf '%s\n' "HANDOFF_SIGNAL: quota at ${PCT}% — session nearing limit. Options: re-submit your message to proceed normally, PLAN_IT: <your request> to get a step breakdown before executing, FINISH_THIS: <your request> to complete one last task then stop, STOP_NOW to write handoff and stop."
+        exit 2
+        ;;
+    PREPARE)
+        write_allowed_turn "none" 0 0
+        emit_context_injection "HANDOFF_SIGNAL: quota at ${PCT}% (PREPARE). Before executing: (1) break the request into numbered steps; (2) identify which steps fit within remaining quota; (3) present the breakdown to the user without executing; (4) wait for the user to confirm steps before proceeding. Type STOP_NOW at any time to start handoff."
+        exit 0
+        ;;
+    WARN)
+        write_allowed_turn "none" 0 0
+        if [[ "$ACTIVE_SOURCE" == "seven_day" ]]; then
+            emit_context_injection "HANDOFF_SIGNAL: WEEKLY quota at ${PCT}% (WARN) — approaching the weekly limit. Type STOP_NOW at any time to start handoff."
+        else
+            emit_context_injection "HANDOFF_SIGNAL: quota at ${PCT}% (WARN) — approaching the 5-hour limit. Type STOP_NOW at any time to start handoff."
+        fi
+        exit 0
+        ;;
+    *)
+        write_allowed_turn "none" 0 0
+        exit 0
+        ;;
+esac
