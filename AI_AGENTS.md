@@ -142,8 +142,7 @@ When creating your log file (`docs/agents/<your-agent-name>.md`), start with the
 
 ## Current Implementation State
 
-Stable production hook system is complete and deployed locally on `feat/implementation`.  
-Current active design branch: `codex/phase1-conversation-hooks`.
+Stable production hook system is complete and shipped on `main` (post phase-1 conversation-hook rewrite, merged 2026-04-23). Multi-agent-collab v0.2.0 migration also shipped on `main` the same day.
 
 | Component | File | Status |
 |-----------|------|--------|

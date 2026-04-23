@@ -4,8 +4,8 @@
 
 1. Read `AI_AGENTS.md`
 2. Read `.codex/CODEX.md`
-3. Read `.codex/memory/session_state.md`
-4. Read `.codex/memory/project_context.md`
+3. Read `.codex/memory/state.md`
+4. Read `.codex/memory/context.md`
 5. Read `docs/agents/codex.md` if cross-agent history matters
 6. Check `git status --short`
 7. Check recent commits with `git log --oneline -10`
@@ -13,8 +13,8 @@
 ## End
 
 1. Re-run verification relevant to your change
-2. Update `.codex/memory/session_state.md`
-3. Update `project_context.md`, `decision_log.md`, or `failure_patterns.md` only if warranted
+2. Update `.codex/memory/state.md`
+3. Update `context.md`, `decisions.md`, or `pitfalls.md` only if warranted
 4. Update `docs/agents/codex.md`
 5. Summarize what changed, what was verified, and any remaining risks
 
